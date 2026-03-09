@@ -34,6 +34,38 @@ dotnet publish src/McpDesktopUi.MacOS/ -c Release
 dotnet publish src/McpDesktopUi.Windows/ -c Release
 ```
 
+## Install from Release
+
+Download the latest binary from [Releases](https://github.com/user/mcp-desktop-ui/releases):
+
+| Platform | File |
+|----------|------|
+| macOS (Apple Silicon) | `mcp-desktop-ui-macos-arm64.tar.gz` |
+| Windows (x64) | `mcp-desktop-ui-windows-x64.zip` |
+
+### macOS
+
+```bash
+tar -xzf mcp-desktop-ui-macos-arm64.tar.gz
+chmod +x mcp-desktop-ui
+sudo mv mcp-desktop-ui /usr/local/bin/
+```
+
+### Windows
+
+Extract `mcp-desktop-ui-windows-x64.zip` and place `mcp-desktop-ui.exe` in your PATH.
+
+## Release
+
+To create a new release, push a version tag:
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+The GitHub Action builds both platforms in parallel and creates a release with the binaries attached.
+
 ## Configuration
 
 - `--screenshot-dir <path>` — Save screenshots as PNG files in this directory
