@@ -5,4 +5,8 @@
     <Project Path="src/McpDesktopUi.MacOS/McpDesktopUi.MacOS.csproj" />
     <Project Path="src/McpDesktopUi.Windows/McpDesktopUi.Windows.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/McpDesktopUi.Common.Tests/McpDesktopUi.Common.Tests.csproj" />
+    <Project Path="tests/McpDesktopUi.Integration.Tests/McpDesktopUi.Integration.Tests.csproj" />
+  </Folder>
 </Solution>

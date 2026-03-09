@@ -1,1 +1,1 @@
-await McpDesktopUi.Common.Program.RunAsync(args, dir => MacOsMcp.UiTools.ScreenshotDir = dir);
+await McpDesktopUi.Common.Program.RunAsync(args, new MacOsMcp.MacOsChecker());

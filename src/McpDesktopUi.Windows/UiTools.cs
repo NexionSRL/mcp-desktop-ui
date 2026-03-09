@@ -4,6 +4,8 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Automation;
+using McpDesktopUi.Common;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using System.ComponentModel;
 
@@ -12,8 +14,6 @@ namespace WindowsMcp;
 [McpServerToolType]
 public static class UiTools
 {
-    public static string? ScreenshotDir { get; set; }
-
     // ── Win32 P/Invoke ─────────────────────────────────────────────────────
 
     [DllImport("user32.dll")]
@@ -83,8 +83,8 @@ public static class UiTools
 
     // ── Tools ──────────────────────────────────────────────────────────────
 
-    [McpServerTool, Description("Capture a screenshot. If window_title is given, captures only that window; otherwise captures the full primary screen. Returns PNG as base64, or saves to configured screenshot directory and returns file path.")]
-    public static string screenshot(string? window_title = null)
+    [McpServerTool, Description(ToolDescriptions.Screenshot)]
+    public static CallToolResult screenshot(string? window_title = null)
     {
         try
         {
@@ -93,9 +93,9 @@ public static class UiTools
             {
                 var hwnd = FindWindow(window_title);
                 if (hwnd == IntPtr.Zero)
-                    return $"ERROR: window '{window_title}' not found";
+                    return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = $"ERROR: window '{window_title}' not found" }] };
                 if (!GetWindowRect(hwnd, out var r))
-                    return "ERROR: could not get window rect";
+                    return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = "ERROR: could not get window rect" }] };
                 bounds = new Rectangle(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
             }
             else
@@ -106,36 +106,26 @@ public static class UiTools
             }
 
             if (bounds.Width <= 0 || bounds.Height <= 0)
-                return "ERROR: invalid window bounds";
+                return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = "ERROR: invalid window bounds" }] };
 
             using var bmp = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
             using var g = Graphics.FromImage(bmp);
             g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
 
-            if (!string.IsNullOrEmpty(ScreenshotDir))
-            {
-                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
-                var label = string.IsNullOrEmpty(window_title) ? "screen" : SanitizeFileName(window_title);
-                var fileName = $"{timestamp}_{label}.png";
-                var filePath = Path.Combine(ScreenshotDir, fileName);
-                bmp.Save(filePath, ImageFormat.Png);
-                return $"OK: saved screenshot to {filePath}";
-            }
-
             using var ms = new MemoryStream();
-            bmp.Save(ms, ImageFormat.Png);
-            return Convert.ToBase64String(ms.ToArray());
+            bmp.Save(ms, ImageFormat.Jpeg);
+            return ScreenshotHelper.ToImageResult(ms.ToArray(), "image/jpeg", window_title);
         }
         catch (Exception ex)
         {
-            return $"ERROR: screenshot failed: {ex.Message}";
+            return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = $"ERROR: screenshot failed: {ex.Message}" }] };
         }
     }
 
-    [McpServerTool, Description("List all visible top-level windows with their titles.")]
+    [McpServerTool, Description(ToolDescriptions.ListWindows)]
     public static string list_windows()
     {
-        try
+        return ToolResult.Run("list_windows", () =>
         {
             var titles = new List<string>();
             EnumWindows((hWnd, _) =>
@@ -150,17 +140,13 @@ public static class UiTools
             return titles.Count == 0
                 ? "No visible windows found"
                 : string.Join("\n", titles.Select((t, i) => $"{i + 1}. {t}"));
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: list_windows failed: {ex.Message}";
-        }
+        });
     }
 
-    [McpServerTool, Description("Get the UI automation element tree for a window. Returns element names, types, and enabled state. Has a 5-second timeout and max depth of 10 levels.")]
+    [McpServerTool, Description(ToolDescriptions.GetUiTree)]
     public static string get_ui_tree(string window_title)
     {
-        try
+        return ToolResult.Run("get_ui_tree", () =>
         {
             var root = FindAutomationElement(window_title);
             if (root == null)
@@ -174,17 +160,13 @@ public static class UiTools
                     : $"(partial, timed out)\n{sb}";
 
             return sb.Length == 0 ? "(empty tree)" : sb.ToString();
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: get_ui_tree failed: {ex.Message}";
-        }
+        });
     }
 
-    [McpServerTool, Description("Click a UI element by name inside a window. Uses Windows UI Automation to find and invoke the element, with fallback to mouse click at element center.")]
+    [McpServerTool, Description(ToolDescriptions.ClickElement)]
     public static string click_element(string window_title, string element_name)
     {
-        try
+        return ToolResult.Run("click_element", () =>
         {
             var root = FindAutomationElement(window_title);
             if (root == null)
@@ -201,28 +183,24 @@ public static class UiTools
                 {
                     var task = Task.Run(() => ((InvokePattern)pattern).Invoke());
                     if (task.Wait(TimeSpan.FromSeconds(3)))
-                        return $"OK: invoked '{element_name}'";
+                        return ToolResult.Ok($"invoked '{element_name}'");
                     else
-                        return $"OK: invoked '{element_name}' (timed out waiting for response, likely dialog closed)";
+                        return ToolResult.Ok($"invoked '{element_name}' (timed out waiting for response, likely dialog closed)");
                 }
                 catch
                 {
-                    return $"OK: invoked '{element_name}' (exception, likely dialog closed)";
+                    return ToolResult.Ok($"invoked '{element_name}' (exception, likely dialog closed)");
                 }
             }
 
             return ClickAtElementCenter(element, element_name);
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: click_element failed: {ex.Message}";
-        }
+        });
     }
 
-    [McpServerTool, Description("Click at specific screen coordinates (x, y).")]
+    [McpServerTool, Description(ToolDescriptions.ClickAt)]
     public static string click_at(int x, int y)
     {
-        try
+        return ToolResult.Run("click_at", () =>
         {
             MoveMouse(x, y);
             var down = new INPUT { type = INPUT_MOUSE, mi = new MOUSEINPUT { dwFlags = MOUSEEVENTF_LEFTDOWN } };
@@ -230,18 +208,14 @@ public static class UiTools
             SendInput(1, ref down, Marshal.SizeOf<INPUT>());
             Thread.Sleep(50);
             SendInput(1, ref up, Marshal.SizeOf<INPUT>());
-            return $"OK: clicked at ({x},{y})";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: click_at failed: {ex.Message}";
-        }
+            return ToolResult.Ok($"clicked at ({x},{y})");
+        });
     }
 
-    [McpServerTool, Description("Right-click at specific screen coordinates (x, y).")]
+    [McpServerTool, Description(ToolDescriptions.RightClickAt)]
     public static string right_click_at(int x, int y)
     {
-        try
+        return ToolResult.Run("right_click_at", () =>
         {
             MoveMouse(x, y);
             var down = new INPUT { type = INPUT_MOUSE, mi = new MOUSEINPUT { dwFlags = MOUSEEVENTF_RIGHTDOWN } };
@@ -249,18 +223,14 @@ public static class UiTools
             SendInput(1, ref down, Marshal.SizeOf<INPUT>());
             Thread.Sleep(50);
             SendInput(1, ref up, Marshal.SizeOf<INPUT>());
-            return $"OK: right-clicked at ({x},{y})";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: right_click_at failed: {ex.Message}";
-        }
+            return ToolResult.Ok($"right-clicked at ({x},{y})");
+        });
     }
 
-    [McpServerTool, Description("Double-click at specific screen coordinates (x, y).")]
+    [McpServerTool, Description(ToolDescriptions.DoubleClickAt)]
     public static string double_click_at(int x, int y)
     {
-        try
+        return ToolResult.Run("double_click_at", () =>
         {
             MoveMouse(x, y);
             for (int i = 0; i < 2; i++)
@@ -272,18 +242,14 @@ public static class UiTools
                 SendInput(1, ref up, Marshal.SizeOf<INPUT>());
                 if (i == 0) Thread.Sleep(50);
             }
-            return $"OK: double-clicked at ({x},{y})";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: double_click_at failed: {ex.Message}";
-        }
+            return ToolResult.Ok($"double-clicked at ({x},{y})");
+        });
     }
 
-    [McpServerTool, Description("Drag from one screen coordinate to another. Holds left mouse button at (from_x, from_y), moves to (to_x, to_y), then releases.")]
+    [McpServerTool, Description(ToolDescriptions.Drag)]
     public static string drag(int from_x, int from_y, int to_x, int to_y)
     {
-        try
+        return ToolResult.Run("drag", () =>
         {
             MoveMouse(from_x, from_y);
             Thread.Sleep(50);
@@ -298,18 +264,14 @@ public static class UiTools
             var up = new INPUT { type = INPUT_MOUSE, mi = new MOUSEINPUT { dwFlags = MOUSEEVENTF_LEFTUP } };
             SendInput(1, ref up, Marshal.SizeOf<INPUT>());
 
-            return $"OK: dragged from ({from_x},{from_y}) to ({to_x},{to_y})";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: drag failed: {ex.Message}";
-        }
+            return ToolResult.Ok($"dragged from ({from_x},{from_y}) to ({to_x},{to_y})");
+        });
     }
 
-    [McpServerTool, Description("Scroll up or down inside a window. Positive clicks = scroll up, negative = scroll down. Each click is one notch of the mouse wheel.")]
+    [McpServerTool, Description(ToolDescriptions.Scroll)]
     public static string scroll(string window_title, int clicks)
     {
-        try
+        return ToolResult.Run("scroll", () =>
         {
             var hwnd = FindWindow(window_title);
             if (hwnd == IntPtr.Zero)
@@ -333,18 +295,14 @@ public static class UiTools
             }
 
             var direction = clicks > 0 ? "up" : "down";
-            return $"OK: scrolled {direction} {Math.Abs(clicks)} click(s) in '{window_title}'";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: scroll failed: {ex.Message}";
-        }
+            return ToolResult.Ok($"scrolled {direction} {Math.Abs(clicks)} click(s) in '{window_title}'");
+        });
     }
 
-    [McpServerTool, Description("Scroll up or down at specific screen coordinates. Positive clicks = scroll up, negative = scroll down.")]
+    [McpServerTool, Description(ToolDescriptions.ScrollAt)]
     public static string scroll_at(int x, int y, int clicks)
     {
-        try
+        return ToolResult.Run("scroll_at", () =>
         {
             MoveMouse(x, y);
             Thread.Sleep(50);
@@ -361,32 +319,24 @@ public static class UiTools
             SendInput(1, ref wheel, Marshal.SizeOf<INPUT>());
 
             var direction = clicks > 0 ? "up" : "down";
-            return $"OK: scrolled {direction} {Math.Abs(clicks)} click(s) at ({x},{y})";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: scroll_at failed: {ex.Message}";
-        }
+            return ToolResult.Ok($"scrolled {direction} {Math.Abs(clicks)} click(s) at ({x},{y})");
+        });
     }
 
-    [McpServerTool, Description("Move the mouse cursor to specific screen coordinates without clicking.")]
+    [McpServerTool, Description(ToolDescriptions.MoveMouse)]
     public static string move_mouse(int x, int y)
     {
-        try
+        return ToolResult.Run("move_mouse", () =>
         {
             MoveMouse(x, y);
-            return $"OK: moved mouse to ({x},{y})";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: move_mouse failed: {ex.Message}";
-        }
+            return ToolResult.Ok($"moved mouse to ({x},{y})");
+        });
     }
 
-    [McpServerTool, Description("Type text into the currently focused control of a window. Use click_at to focus a text field first.")]
+    [McpServerTool, Description(ToolDescriptions.TypeText)]
     public static string type_text(string window_title, string text)
     {
-        try
+        return ToolResult.Run("type_text", () =>
         {
             var hwnd = FindWindow(window_title);
             if (hwnd == IntPtr.Zero)
@@ -401,7 +351,7 @@ public static class UiTools
                 try
                 {
                     System.Windows.Forms.SendKeys.SendWait(text);
-                    result = $"OK: typed '{text}' into '{window_title}'";
+                    result = ToolResult.Ok($"typed '{text}' into '{window_title}'");
                 }
                 catch (Exception ex)
                 {
@@ -412,17 +362,13 @@ public static class UiTools
             t.Start();
             t.Join(TimeSpan.FromSeconds(5));
             return string.IsNullOrEmpty(result) ? "ERROR: type_text timed out" : result;
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: type_text failed: {ex.Message}";
-        }
+        });
     }
 
-    [McpServerTool, Description("Send a key press to a window. Supports: escape, enter, tab, space.")]
+    [McpServerTool, Description(ToolDescriptions.SendKey)]
     public static string send_key(string window_title, string key)
     {
-        try
+        return ToolResult.Run("send_key", () =>
         {
             var hwnd = FindWindow(window_title);
             if (hwnd == IntPtr.Zero)
@@ -445,18 +391,14 @@ public static class UiTools
             PostMessage(hwnd, WM_KEYDOWN, (IntPtr)vk, IntPtr.Zero);
             Thread.Sleep(50);
             PostMessage(hwnd, WM_KEYUP, (IntPtr)vk, IntPtr.Zero);
-            return $"OK: sent '{key}' to '{window_title}'";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: send_key failed: {ex.Message}";
-        }
+            return ToolResult.Ok($"sent '{key}' to '{window_title}'");
+        });
     }
 
-    [McpServerTool, Description("Bring a window to the foreground and restore it if minimized.")]
+    [McpServerTool, Description(ToolDescriptions.FocusWindow)]
     public static string focus_window(string window_title)
     {
-        try
+        return ToolResult.Run("focus_window", () =>
         {
             var hwnd = FindWindow(window_title);
             if (hwnd == IntPtr.Zero)
@@ -464,18 +406,14 @@ public static class UiTools
 
             ShowWindow(hwnd, SW_RESTORE);
             SetForegroundWindow(hwnd);
-            return $"OK: focused '{window_title}'";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: focus_window failed: {ex.Message}";
-        }
+            return ToolResult.Ok($"focused '{window_title}'");
+        });
     }
 
-    [McpServerTool, Description("Get the screen coordinates (left, top, right, bottom, width, height) of a window.")]
+    [McpServerTool, Description(ToolDescriptions.GetWindowRect)]
     public static string get_window_rect(string window_title)
     {
-        try
+        return ToolResult.Run("get_window_rect", () =>
         {
             var hwnd = FindWindow(window_title);
             if (hwnd == IntPtr.Zero)
@@ -485,29 +423,21 @@ public static class UiTools
                 return "ERROR: could not get window rect";
 
             return $"left={r.Left} top={r.Top} right={r.Right} bottom={r.Bottom} width={r.Right - r.Left} height={r.Bottom - r.Top}";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: get_window_rect failed: {ex.Message}";
-        }
+        });
     }
 
-    [McpServerTool, Description("Close a window by sending WM_CLOSE.")]
+    [McpServerTool, Description(ToolDescriptions.CloseWindow)]
     public static string close_window(string window_title)
     {
-        try
+        return ToolResult.Run("close_window", () =>
         {
             var hwnd = FindWindow(window_title);
             if (hwnd == IntPtr.Zero)
                 return $"ERROR: window '{window_title}' not found";
 
             PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-            return $"OK: sent WM_CLOSE to '{window_title}'";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: close_window failed: {ex.Message}";
-        }
+            return ToolResult.Ok($"sent WM_CLOSE to '{window_title}'");
+        });
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -543,7 +473,7 @@ public static class UiTools
         Thread.Sleep(50);
         SendInput(1, ref up, Marshal.SizeOf<INPUT>());
 
-        return $"OK: clicked '{element_name}' at ({cx},{cy})";
+        return ToolResult.Ok($"clicked '{element_name}' at ({cx},{cy})");
     }
 
     private static IntPtr FindWindow(string titleFragment)
@@ -604,15 +534,5 @@ public static class UiTools
             WalkTree(child, sb, depth + 1);
             child = walker.GetNextSibling(child);
         }
-    }
-
-    private static string SanitizeFileName(string name)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var sb = new StringBuilder(name.Length);
-        foreach (var c in name)
-            sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
-        var result = sb.ToString().Trim();
-        return result.Length > 50 ? result[..50] : result;
     }
 }

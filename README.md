@@ -106,7 +106,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "desktop-ui": {
       "command": "/usr/local/bin/mcp-desktop-ui",
-      "args": ["--screenshot-dir", "/tmp/screenshots"]
+      "args": ["--screenshot-dir", "./tmp/screenshots"]
     }
   }
 }
@@ -119,7 +119,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "desktop-ui": {
       "command": "C:\\path\\to\\mcp-desktop-ui.exe",
-      "args": ["--screenshot-dir", "C:\\tmp\\screenshots"]
+      "args": ["--screenshot-dir", ".\\tmp\\screenshots"]
     }
   }
 }
@@ -134,7 +134,7 @@ Add to your `~/.claude/settings.json` or project `.claude/settings.json`:
   "mcpServers": {
     "desktop-ui": {
       "command": "/usr/local/bin/mcp-desktop-ui",
-      "args": []
+      "args": ["--screenshot-dir", "./tmp/screenshots"]
     }
   }
 }
@@ -149,7 +149,7 @@ Add to `.vscode/mcp.json` in your project:
   "servers": {
     "desktop-ui": {
       "command": "/usr/local/bin/mcp-desktop-ui",
-      "args": ["--screenshot-dir", "/tmp/screenshots"]
+      "args": ["--screenshot-dir", "./tmp/screenshots"]
     }
   }
 }
@@ -164,18 +164,52 @@ Add to Cursor Settings > MCP Servers, or in `~/.cursor/mcp.json`:
   "mcpServers": {
     "desktop-ui": {
       "command": "/usr/local/bin/mcp-desktop-ui",
-      "args": []
+      "args": ["--screenshot-dir", "./tmp/screenshots"]
     }
   }
 }
 ```
 
-> **Note:** On macOS, the app needs Accessibility permissions (System Settings > Privacy & Security > Accessibility). On Windows, some tools may require running as Administrator. On Linux, a running X11 display is required (Wayland is not yet supported).
+## Permissions
+
+This MCP server controls your mouse, keyboard, and reads the screen. **The application that runs the MCP server needs OS-level permissions**, not the server binary itself.
+
+### macOS
+
+The **host application** (VS Code, Claude Desktop, Terminal, etc.) needs **Accessibility** and **Screen Recording** permissions:
+
+1. Go to **System Settings > Privacy & Security > Accessibility**
+2. Add the app that runs the MCP server (e.g., `Visual Studio Code`, `Claude`, `Terminal`, `iTerm2`)
+3. Go to **System Settings > Privacy & Security > Screen Recording**
+4. Add the same app
+
+> Without Accessibility permission, click/type/UI tree tools will fail. Without Screen Recording, screenshots will be blank or fail.
+
+The server checks for Accessibility permission at startup and logs a warning to stderr if not granted.
+
+### Windows
+
+Some tools may require **running as Administrator** (e.g., interacting with elevated windows). For most applications, standard user permissions are sufficient.
+
+### Linux
+
+A running **X11 display** is required (Wayland is not supported). The server checks at startup that `DISPLAY` is set and that required tools (`xdotool`, `wmctrl`, screenshot tool, `python3`) are installed.
+
+### VS Code / Cursor
+
+When using this MCP server from VS Code or Cursor, **VS Code/Cursor is the host application** that needs the OS permissions above. On macOS, you must add `Visual Studio Code` (or `Cursor`) to both Accessibility and Screen Recording in System Settings.
+
+### Claude Desktop
+
+On macOS, add `Claude` to Accessibility and Screen Recording in System Settings.
+
+### Claude Code (CLI)
+
+The terminal application you use (Terminal, iTerm2, Warp, etc.) needs the permissions. Add your terminal app to Accessibility and Screen Recording.
 
 ## Configuration
 
-- `--screenshot-dir <path>` — Save screenshots as PNG files in this directory
-- `MCP_SCREENSHOT_DIR` env var — Same as above
+- `--screenshot-dir <path>` — Override screenshot directory. Default: `./tmp/screenshots`
 
 ## Tools
 

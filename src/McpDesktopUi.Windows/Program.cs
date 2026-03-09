@@ -1,1 +1,1 @@
-await McpDesktopUi.Common.Program.RunAsync(args, dir => WindowsMcp.UiTools.ScreenshotDir = dir);
+await McpDesktopUi.Common.Program.RunAsync(args, new WindowsMcp.WindowsChecker());

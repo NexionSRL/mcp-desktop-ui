@@ -13,11 +13,19 @@ public static class Program
 {
     /// <summary>
     /// Configures and runs the MCP server with stdio transport.
-    /// Handles --screenshot-dir CLI flag and MCP_SCREENSHOT_DIR env var.
-    /// Sets the ScreenshotDir property on the platform UiTools class via the provided setter.
+    /// Handles --screenshot-dir CLI flag (default: ./tmp/screenshots).
+    /// Optionally runs platform-specific dependency checks at startup.
     /// </summary>
-    public static async Task RunAsync(string[] args, Action<string?> setScreenshotDir)
+    public static async Task RunAsync(string[] args, IPlatformChecker? checker = null)
     {
+        // Run platform checks and log warnings to stderr (stdout is MCP transport)
+        if (checker != null)
+        {
+            var warnings = checker.CheckDependencies();
+            foreach (var warning in warnings)
+                Console.Error.WriteLine($"[mcp-desktop-ui] WARNING: {warning}");
+        }
+
         var builder = Host.CreateApplicationBuilder(args);
         builder.Logging.ClearProviders();
         builder.Services
@@ -25,8 +33,8 @@ public static class Program
             .WithStdioServerTransport()
             .WithToolsFromAssembly(Assembly.GetEntryAssembly()!);
 
-        // Configure screenshot directory from --screenshot-dir argument or MCP_SCREENSHOT_DIR env var
-        var screenshotDir = Environment.GetEnvironmentVariable("MCP_SCREENSHOT_DIR");
+        // Configure screenshot directory: --screenshot-dir arg or default ./tmp/screenshots
+        var screenshotDir = Path.Combine(Directory.GetCurrentDirectory(), "tmp", "screenshots");
         for (int i = 0; i < args.Length - 1; i++)
         {
             if (args[i] == "--screenshot-dir")
@@ -35,12 +43,10 @@ public static class Program
                 break;
             }
         }
-        if (!string.IsNullOrEmpty(screenshotDir))
-        {
-            screenshotDir = Path.GetFullPath(screenshotDir);
-            Directory.CreateDirectory(screenshotDir);
-        }
-        setScreenshotDir(screenshotDir);
+
+        screenshotDir = Path.GetFullPath(screenshotDir);
+        Directory.CreateDirectory(screenshotDir);
+        ScreenshotConfig.Dir = screenshotDir;
 
         await builder.Build().RunAsync();
     }

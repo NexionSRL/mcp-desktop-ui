@@ -1,1 +1,1 @@
-await McpDesktopUi.Common.Program.RunAsync(args, dir => LinuxMcp.UiTools.ScreenshotDir = dir);
+await McpDesktopUi.Common.Program.RunAsync(args, new LinuxMcp.LinuxChecker());
