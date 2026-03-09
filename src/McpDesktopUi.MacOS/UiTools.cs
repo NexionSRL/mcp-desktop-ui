@@ -33,6 +33,9 @@ public static class UiTools
     [DllImport(CoreGraphics)]
     private static extern IntPtr CGEventCreateKeyboardEvent(IntPtr source, ushort virtualKey, bool keyDown);
 
+    [DllImport(CoreGraphics)]
+    private static extern void CGEventKeyboardSetUnicodeString(IntPtr evt, int stringLength, ushort[] unicodeString);
+
     // CGWindowList
     [DllImport(CoreGraphics)]
     private static extern IntPtr CGWindowListCopyWindowInfo(CGWindowListOption option, uint relativeToWindow);
@@ -503,7 +506,7 @@ public static class UiTools
         }
     }
 
-    [McpServerTool, Description("Type text into a window using AppleScript keystroke. Use click_at to focus a text field first.")]
+    [McpServerTool, Description("Type text into a window using CGEvent keyboard events. Respects current input focus (web fields, text boxes). Use click_at to focus a text field first.")]
     public static string type_text(string window_title, string text)
     {
         try
@@ -512,11 +515,31 @@ public static class UiTools
             if (ownerName == null)
                 return $"ERROR: window '{window_title}' not found";
 
-            // Focus window first
+            // Focus window without stealing focus from current input field
             RunAppleScript($"tell application \"{EscapeAppleScript(ownerName)}\" to activate");
             Thread.Sleep(200);
 
-            RunAppleScript($"tell application \"System Events\" to keystroke \"{EscapeAppleScript(text)}\"");
+            // Type each character using CGEvent with unicode string
+            // This sends key events at the HID level, respecting the current input focus
+            foreach (var ch in text)
+            {
+                var keyDown = CGEventCreateKeyboardEvent(IntPtr.Zero, 0, true);
+                var keyUp = CGEventCreateKeyboardEvent(IntPtr.Zero, 0, false);
+
+                // Set the unicode character on the event
+                var chars = new ushort[] { ch };
+                CGEventKeyboardSetUnicodeString(keyDown, 1, chars);
+                CGEventKeyboardSetUnicodeString(keyUp, 1, chars);
+
+                CGEventPost(CGEventTapLocation.HID, keyDown);
+                Thread.Sleep(10);
+                CGEventPost(CGEventTapLocation.HID, keyUp);
+                Thread.Sleep(10);
+
+                CFRelease(keyDown);
+                CFRelease(keyUp);
+            }
+
             return $"OK: typed '{text}' into '{window_title}'";
         }
         catch (Exception ex)
