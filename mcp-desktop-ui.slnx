@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/McpDesktopUi.Common/McpDesktopUi.Common.csproj" />
+    <Project Path="src/McpDesktopUi.Linux/McpDesktopUi.Linux.csproj" />
     <Project Path="src/McpDesktopUi.MacOS/McpDesktopUi.MacOS.csproj" />
     <Project Path="src/McpDesktopUi.Windows/McpDesktopUi.Windows.csproj" />
   </Folder>

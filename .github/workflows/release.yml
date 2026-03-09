@@ -56,8 +56,33 @@ jobs:
           name: windows-x64
           path: mcp-desktop-ui-windows-x64.zip
 
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish Linux (x64)
+        run: dotnet publish src/McpDesktopUi.Linux/ -c Release -o publish/linux
+
+      - name: Create archive
+        run: |
+          cd publish/linux
+          chmod +x mcp-desktop-ui
+          tar -czf ../../mcp-desktop-ui-linux-x64.tar.gz mcp-desktop-ui
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: mcp-desktop-ui-linux-x64.tar.gz
+
   release:
-    needs: [build-macos, build-windows]
+    needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -72,3 +97,4 @@ jobs:
           files: |
             mcp-desktop-ui-macos-arm64.tar.gz
             mcp-desktop-ui-windows-x64.zip
+            mcp-desktop-ui-linux-x64.tar.gz
