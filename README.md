@@ -1,20 +1,20 @@
 # mcp-desktop-ui
 
-Cross-platform MCP server for desktop UI automation. Provides 16 tools for screenshots, window management, mouse/keyboard control, and UI accessibility tree inspection.
+Cross-platform MCP server for desktop UI automation. Provides 9 tools for screenshots, mouse/keyboard control.
 
 ## Projects
 
 - **McpDesktopUi.Common** — Shared interface, MCP setup, and configuration
-- **McpDesktopUi.Windows** — Windows implementation using Win32 APIs (P/Invoke, UIAutomation)
-- **McpDesktopUi.MacOS** — macOS implementation using CoreGraphics, Accessibility API, and AppleScript
-- **McpDesktopUi.Linux** — Linux implementation using X11/XTest P/Invoke, xdotool, and AT-SPI2
+- **McpDesktopUi.Windows** — Windows implementation using Win32 APIs (P/Invoke)
+- **McpDesktopUi.MacOS** — macOS implementation using CoreGraphics
+- **McpDesktopUi.Linux** — Linux implementation using X11/XTest P/Invoke and xdotool
 
 ## Requirements
 
 - .NET 10 SDK
 - Windows: Windows 10+ (x64)
 - macOS: macOS 13+ (Apple Silicon)
-- Linux: X11 desktop with `xdotool`, `wmctrl`, and optionally `python3-atspi` (for accessibility tree)
+- Linux: X11 desktop with `xdotool` and `ImageMagick` (for screenshots)
 
 ## Build
 
@@ -76,10 +76,10 @@ Install dependencies:
 
 ```bash
 # Debian/Ubuntu
-sudo apt install xdotool wmctrl imagemagick python3-gi gir1.2-atspi-2.0
+sudo apt install xdotool imagemagick
 
 # Fedora
-sudo dnf install xdotool wmctrl ImageMagick python3-gobject at-spi2-core
+sudo dnf install xdotool ImageMagick
 ```
 
 ## Release
@@ -87,11 +87,16 @@ sudo dnf install xdotool wmctrl ImageMagick python3-gobject at-spi2-core
 To create a new release, push a version tag:
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.4.1
+git push origin v1.4.1
 ```
 
-The GitHub Action builds both platforms in parallel and creates a release with the binaries attached.
+The GitHub Action builds all platforms in parallel and creates a release with the binaries attached.
+
+## CLI Flags
+
+- `--version` — Print version and exit
+- `--screenshot-dir <path>` — Override screenshot directory (default: `./tmp/screenshots`)
 
 ## MCP Client Setup
 
@@ -183,8 +188,6 @@ The **host application** (VS Code, Claude Desktop, Terminal, etc.) needs **Acces
 3. Go to **System Settings > Privacy & Security > Screen Recording**
 4. Add the same app
 
-> Without Accessibility permission, click/type/UI tree tools will fail. Without Screen Recording, screenshots will be blank or fail.
-
 The server checks for Accessibility permission at startup and logs a warning to stderr if not granted.
 
 ### Windows
@@ -193,41 +196,18 @@ Some tools may require **running as Administrator** (e.g., interacting with elev
 
 ### Linux
 
-A running **X11 display** is required (Wayland is not supported). The server checks at startup that `DISPLAY` is set and that required tools (`xdotool`, `wmctrl`, screenshot tool, `python3`) are installed.
-
-### VS Code / Cursor
-
-When using this MCP server from VS Code or Cursor, **VS Code/Cursor is the host application** that needs the OS permissions above. On macOS, you must add `Visual Studio Code` (or `Cursor`) to both Accessibility and Screen Recording in System Settings.
-
-### Claude Desktop
-
-On macOS, add `Claude` to Accessibility and Screen Recording in System Settings.
-
-### Claude Code (CLI)
-
-The terminal application you use (Terminal, iTerm2, Warp, etc.) needs the permissions. Add your terminal app to Accessibility and Screen Recording.
-
-## Configuration
-
-- `--screenshot-dir <path>` — Override screenshot directory. Default: `./tmp/screenshots`
+A running **X11 display** is required (Wayland is not supported). The server checks at startup that `DISPLAY` is set and that required tools (`xdotool`, screenshot tool) are installed.
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `screenshot` | Capture full screen or specific window |
-| `list_windows` | List visible windows |
-| `get_ui_tree` | Get UI automation/accessibility tree |
-| `click_element` | Click element by name |
-| `click_at` | Click at coordinates |
-| `right_click_at` | Right-click at coordinates |
-| `double_click_at` | Double-click at coordinates |
-| `drag` | Drag from one point to another |
-| `scroll` | Scroll in a window |
-| `scroll_at` | Scroll at coordinates |
-| `move_mouse` | Move mouse cursor |
-| `type_text` | Type text into a window |
-| `send_key` | Send key press (escape, enter, tab, space) |
-| `focus_window` | Bring window to foreground |
-| `get_window_rect` | Get window position and size |
-| `close_window` | Close a window |
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `screenshot` | *(none)* | Capture a full-screen screenshot |
+| `click_at` | `x`, `y` | Click at screen coordinates |
+| `right_click_at` | `x`, `y` | Right-click at screen coordinates |
+| `double_click_at` | `x`, `y` | Double-click at screen coordinates |
+| `drag` | `from_x`, `from_y`, `to_x`, `to_y` | Drag from one point to another |
+| `scroll` | `clicks` | Scroll at current mouse position (positive=up, negative=down) |
+| `move_mouse` | `x`, `y` | Move mouse cursor without clicking |
+| `type_text` | `text` | Type text into whatever has focus |
+| `send_key` | `key` | Send key press (escape, enter, tab, space) |

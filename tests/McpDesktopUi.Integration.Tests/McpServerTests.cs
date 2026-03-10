@@ -140,63 +140,17 @@ public class McpServerTests : IDisposable
                 .Select(t => t.GetProperty("name").GetString())
                 .ToList();
 
-            // All 16 tools should be present
+            // All 9 tools should be present
             Assert.Contains("screenshot", toolNames);
-            Assert.Contains("list_windows", toolNames);
-            Assert.Contains("get_ui_tree", toolNames);
-            Assert.Contains("click_element", toolNames);
             Assert.Contains("click_at", toolNames);
             Assert.Contains("right_click_at", toolNames);
             Assert.Contains("double_click_at", toolNames);
             Assert.Contains("drag", toolNames);
             Assert.Contains("scroll", toolNames);
-            Assert.Contains("scroll_at", toolNames);
             Assert.Contains("move_mouse", toolNames);
             Assert.Contains("type_text", toolNames);
             Assert.Contains("send_key", toolNames);
-            Assert.Contains("focus_window", toolNames);
-            Assert.Contains("get_window_rect", toolNames);
-            Assert.Contains("close_window", toolNames);
-            Assert.Equal(16, toolNames.Count);
-        }
-        finally
-        {
-            proc.Kill();
-        }
-    }
-
-    [Fact]
-    public async Task Server_ListWindows_ReturnsResult()
-    {
-        if (_binaryPath == null)
-        {
-            // Binary not built yet — skip gracefully
-            return;
-        }
-
-        using var proc = StartServer();
-        try
-        {
-            await Initialize(proc);
-
-            var callRequest = new
-            {
-                jsonrpc = "2.0",
-                id = 3,
-                method = "tools/call",
-                @params = new
-                {
-                    name = "list_windows",
-                    arguments = new { }
-                }
-            };
-
-            await SendMessage(proc, callRequest);
-            var response = await ReadResponse(proc, TimeSpan.FromSeconds(10));
-
-            Assert.NotNull(response);
-            // list_windows is read-only and safe to call
-            Assert.True(response.TryGetProperty("result", out var result));
+            Assert.Equal(9, toolNames.Count);
         }
         finally
         {

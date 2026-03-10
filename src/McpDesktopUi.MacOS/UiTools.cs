@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using System.ComponentModel;
@@ -16,7 +15,6 @@ public static class UiTools
 
     private const string CoreGraphics = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
     private const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
-    private const string ApplicationServices = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices";
 
     // CGEvent
     [DllImport(CoreGraphics)]
@@ -37,67 +35,9 @@ public static class UiTools
     [DllImport(CoreGraphics)]
     private static extern void CGEventKeyboardSetUnicodeString(IntPtr evt, int stringLength, ushort[] unicodeString);
 
-    // CGWindowList
-    [DllImport(CoreGraphics)]
-    private static extern IntPtr CGWindowListCopyWindowInfo(CGWindowListOption option, uint relativeToWindow);
-
     // CoreFoundation
     [DllImport(CoreFoundation)]
-    private static extern long CFArrayGetCount(IntPtr theArray);
-
-    [DllImport(CoreFoundation)]
-    private static extern IntPtr CFArrayGetValueAtIndex(IntPtr theArray, long idx);
-
-    [DllImport(CoreFoundation)]
-    private static extern IntPtr CFDictionaryGetValue(IntPtr theDict, IntPtr key);
-
-    [DllImport(CoreFoundation)]
-    private static extern bool CFNumberGetValue(IntPtr number, int theType, out int value);
-
-    [DllImport(CoreFoundation)]
-    private static extern bool CFNumberGetValue(IntPtr number, int theType, out double value);
-
-    [DllImport(CoreFoundation)]
-    private static extern long CFStringGetLength(IntPtr theString);
-
-    [DllImport(CoreFoundation)]
-    private static extern bool CFStringGetCString(IntPtr theString, byte[] buffer, long bufferSize, uint encoding);
-
-    [DllImport(CoreFoundation)]
-    private static extern IntPtr CFStringCreateWithCString(IntPtr alloc, string cStr, uint encoding);
-
-    [DllImport(CoreFoundation)]
     private static extern void CFRelease(IntPtr cf);
-
-    [DllImport(CoreFoundation)]
-    private static extern bool CFDictionaryGetValueIfPresent(IntPtr theDict, IntPtr key, out IntPtr value);
-
-    // Accessibility
-    [DllImport(ApplicationServices)]
-    private static extern IntPtr AXUIElementCreateApplication(int pid);
-
-    [DllImport(ApplicationServices)]
-    private static extern int AXUIElementCopyAttributeValue(IntPtr element, IntPtr attribute, out IntPtr value);
-
-    [DllImport(ApplicationServices)]
-    private static extern int AXUIElementPerformAction(IntPtr element, IntPtr action);
-
-    [DllImport(ApplicationServices)]
-    private static extern int AXUIElementCopyAttributeValues(IntPtr element, IntPtr attribute, int index, int maxValues, out IntPtr values);
-
-    [DllImport(ApplicationServices)]
-    private static extern int AXUIElementGetTypeID();
-
-    [DllImport(CoreFoundation)]
-    private static extern int CFGetTypeID(IntPtr cf);
-
-    [DllImport(CoreFoundation)]
-    private static extern int CFBooleanGetValue(IntPtr boolean);
-
-    private const uint kCFStringEncodingUTF8 = 0x08000100;
-    private const int kCFNumberSInt32Type = 3;
-    private const int kCFNumberFloat64Type = 13;
-    private const int kAXErrorSuccess = 0;
 
     private enum CGEventType : uint
     {
@@ -128,13 +68,6 @@ public static class UiTools
         Line = 1,
     }
 
-    [Flags]
-    private enum CGWindowListOption : uint
-    {
-        OptionOnScreenOnly = (1 << 0),
-        ExcludeDesktopElements = (1 << 4),
-    }
-
     [StructLayout(LayoutKind.Sequential)]
     private struct CGPoint
     {
@@ -146,26 +79,13 @@ public static class UiTools
     // ── Tools ──────────────────────────────────────────────────────────────
 
     [McpServerTool, Description(ToolDescriptions.Screenshot)]
-    public static CallToolResult screenshot(string? window_title = null)
+    public static CallToolResult screenshot()
     {
         try
         {
-            var tempPath = ScreenshotHelper.GenerateTempPath(window_title, ".jpg");
+            var tempPath = ScreenshotHelper.GenerateTempPath(null, ".jpg");
 
-            string args;
-            if (window_title != null)
-            {
-                var windowId = FindWindowId(window_title);
-                if (windowId == 0)
-                    return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = $"ERROR: window '{window_title}' not found" }] };
-                args = $"-t jpg -l {windowId} -o \"{tempPath}\"";
-            }
-            else
-            {
-                args = $"-t jpg \"{tempPath}\"";
-            }
-
-            var psi = new ProcessStartInfo("screencapture", args)
+            var psi = new ProcessStartInfo("screencapture", $"-t jpg \"{tempPath}\"")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -178,144 +98,11 @@ public static class UiTools
             if (proc.ExitCode != 0 || !File.Exists(tempPath))
                 return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = $"ERROR: screencapture failed (exit code {proc.ExitCode})" }] };
 
-            // Normalize screenshot to logical (point) coordinates so that
-            // coordinates from the image map directly to CGEvent mouse functions.
-            // Full-screen captures are already at logical resolution (1x).
-            // Window captures (-l flag) use backing store resolution (2x on Retina),
-            // so we resize them down to match the window's point dimensions.
-            if (window_title != null)
-            {
-                var (_, rect) = FindWindowOwnerAndRect(window_title);
-                if (rect.HasValue)
-                {
-                    var (_, _, w, h) = rect.Value;
-                    if (w > 0 && h > 0)
-                        ResizeImageIfNeeded(tempPath, (int)w, (int)h);
-                }
-            }
-
-            return ScreenshotHelper.ToImageResultFromFile(tempPath, "image/jpeg", window_title);
+            return ScreenshotHelper.ToImageResultFromFile(tempPath, "image/jpeg", null);
         }
         catch (Exception ex)
         {
             return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = $"ERROR: screenshot failed: {ex.Message}" }] };
-        }
-    }
-
-    [McpServerTool, Description(ToolDescriptions.ListWindows)]
-    public static string list_windows()
-    {
-        return ToolResult.Run("list_windows", () =>
-        {
-            var windows = GetWindowList();
-            if (windows.Count == 0)
-                return "No visible windows found";
-
-            var sb = new StringBuilder();
-            int i = 1;
-            foreach (var (ownerName, windowName, _, _) in windows)
-            {
-                var title = string.IsNullOrEmpty(windowName) ? ownerName : $"{ownerName} - {windowName}";
-                sb.AppendLine($"{i++}. {title}");
-            }
-            return sb.ToString().TrimEnd();
-        });
-    }
-
-    [McpServerTool, Description(ToolDescriptions.GetUiTree)]
-    public static string get_ui_tree(string window_title)
-    {
-        try
-        {
-            var (pid, _) = FindWindowPidAndId(window_title);
-            if (pid == 0)
-                return $"ERROR: window '{window_title}' not found";
-
-            var appRef = AXUIElementCreateApplication(pid);
-            if (appRef == IntPtr.Zero)
-                return $"ERROR: could not create accessibility element for '{window_title}'";
-
-            try
-            {
-                // Find the window element
-                var windowEl = FindAXWindow(appRef, window_title);
-                if (windowEl == IntPtr.Zero)
-                    windowEl = appRef;
-
-                var sb = new StringBuilder();
-                var task = Task.Run(() => WalkAXTree(windowEl, sb, 0));
-                if (!task.Wait(TimeSpan.FromSeconds(5)))
-                    return sb.Length == 0
-                        ? $"ERROR: timed out reading UI tree for '{window_title}'"
-                        : $"(partial, timed out)\n{sb}";
-
-                return sb.Length == 0 ? "(empty tree)" : sb.ToString();
-            }
-            finally
-            {
-                CFRelease(appRef);
-            }
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: get_ui_tree failed: {ex.Message}";
-        }
-    }
-
-    [McpServerTool, Description(ToolDescriptions.ClickElement)]
-    public static string click_element(string window_title, string element_name)
-    {
-        try
-        {
-            var (pid, _) = FindWindowPidAndId(window_title);
-            if (pid == 0)
-                return $"ERROR: window '{window_title}' not found";
-
-            var appRef = AXUIElementCreateApplication(pid);
-            if (appRef == IntPtr.Zero)
-                return $"ERROR: could not create accessibility element for '{window_title}'";
-
-            try
-            {
-                var windowEl = FindAXWindow(appRef, window_title);
-                if (windowEl == IntPtr.Zero)
-                    windowEl = appRef;
-
-                var element = FindAXElementByName(windowEl, element_name, 0);
-                if (element == IntPtr.Zero)
-                    return $"ERROR: element '{element_name}' not found in '{window_title}'";
-
-                // Try AXPress action first
-                var pressAction = CFStringCreateWithCString(IntPtr.Zero, "AXPress", kCFStringEncodingUTF8);
-                try
-                {
-                    var result = AXUIElementPerformAction(element, pressAction);
-                    if (result == kAXErrorSuccess)
-                        return $"OK: pressed '{element_name}'";
-                }
-                finally
-                {
-                    CFRelease(pressAction);
-                }
-
-                // Fallback: click at element center
-                var (cx, cy) = GetAXElementCenter(element);
-                if (cx >= 0 && cy >= 0)
-                {
-                    ClickAtPoint(cx, cy);
-                    return $"OK: clicked '{element_name}' at ({cx},{cy})";
-                }
-
-                return $"ERROR: could not click '{element_name}' - no position available";
-            }
-            finally
-            {
-                CFRelease(appRef);
-            }
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: click_element failed: {ex.Message}";
         }
     }
 
@@ -414,56 +201,16 @@ public static class UiTools
     }
 
     [McpServerTool, Description(ToolDescriptions.Scroll)]
-    public static string scroll(string window_title, int clicks)
+    public static string scroll(int clicks)
     {
         return ToolResult.Run("scroll", () =>
         {
-            var (ownerName, rect) = FindWindowOwnerAndRect(window_title);
-            if (ownerName == null)
-                return $"ERROR: window '{window_title}' not found";
-
-            // Focus window via AppleScript
-            RunAppleScript($"tell application \"{EscapeAppleScript(ownerName)}\" to activate");
-            Thread.Sleep(200);
-
-            // Move mouse to window center
-            if (rect.HasValue)
-            {
-                var (rx, ry, rw, rh) = rect.Value;
-                var center = new CGPoint(rx + rw / 2.0, ry + rh / 2.0);
-                var moveEvt = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.MouseMoved, center, CGMouseButton.Left);
-                CGEventPost(CGEventTapLocation.HID, moveEvt);
-                CFRelease(moveEvt);
-                Thread.Sleep(50);
-            }
-
             var scrollEvt = CGEventCreateScrollWheelEvent(IntPtr.Zero, CGScrollEventUnit.Line, 1, clicks);
             CGEventPost(CGEventTapLocation.HID, scrollEvt);
             CFRelease(scrollEvt);
 
             var direction = clicks > 0 ? "up" : "down";
-            return ToolResult.Ok($"scrolled {direction} {Math.Abs(clicks)} click(s) in '{window_title}'");
-        });
-    }
-
-    [McpServerTool, Description(ToolDescriptions.ScrollAt)]
-    public static string scroll_at(int x, int y, int clicks)
-    {
-        return ToolResult.Run("scroll_at", () =>
-        {
-            // Move mouse to position
-            var point = new CGPoint(x, y);
-            var moveEvt = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.MouseMoved, point, CGMouseButton.Left);
-            CGEventPost(CGEventTapLocation.HID, moveEvt);
-            CFRelease(moveEvt);
-            Thread.Sleep(50);
-
-            var scrollEvt = CGEventCreateScrollWheelEvent(IntPtr.Zero, CGScrollEventUnit.Line, 1, clicks);
-            CGEventPost(CGEventTapLocation.HID, scrollEvt);
-            CFRelease(scrollEvt);
-
-            var direction = clicks > 0 ? "up" : "down";
-            return ToolResult.Ok($"scrolled {direction} {Math.Abs(clicks)} click(s) at ({x},{y})");
+            return ToolResult.Ok($"scrolled {direction} {Math.Abs(clicks)} click(s) at current mouse position");
         });
     }
 
@@ -481,18 +228,10 @@ public static class UiTools
     }
 
     [McpServerTool, Description(ToolDescriptions.TypeText)]
-    public static string type_text(string window_title, string text)
+    public static string type_text(string text)
     {
         try
         {
-            var (ownerName, _) = FindWindowOwnerAndRect(window_title);
-            if (ownerName == null)
-                return $"ERROR: window '{window_title}' not found";
-
-            // Focus window without stealing focus from current input field
-            RunAppleScript($"tell application \"{EscapeAppleScript(ownerName)}\" to activate");
-            Thread.Sleep(200);
-
             // Type each character using CGEvent with unicode string
             // This sends key events at the HID level, respecting the current input focus
             foreach (var ch in text)
@@ -514,7 +253,8 @@ public static class UiTools
                 CFRelease(keyUp);
             }
 
-            return $"OK: typed '{text}' into '{window_title}'";
+            return $"OK: typed '{text}' into focused window";
+
         }
         catch (Exception ex)
         {
@@ -523,14 +263,10 @@ public static class UiTools
     }
 
     [McpServerTool, Description(ToolDescriptions.SendKey)]
-    public static string send_key(string window_title, string key)
+    public static string send_key(string key)
     {
         try
         {
-            var (ownerName, _) = FindWindowOwnerAndRect(window_title);
-            if (ownerName == null)
-                return $"ERROR: window '{window_title}' not found";
-
             ushort keyCode = key.ToLowerInvariant() switch
             {
                 "escape" or "esc" => 53,
@@ -543,10 +279,6 @@ public static class UiTools
             if (keyCode == ushort.MaxValue)
                 return $"ERROR: unsupported key '{key}'. Supported: escape, enter, tab, space";
 
-            // Focus window
-            RunAppleScript($"tell application \"{EscapeAppleScript(ownerName)}\" to activate");
-            Thread.Sleep(200);
-
             var down = CGEventCreateKeyboardEvent(IntPtr.Zero, keyCode, true);
             var up = CGEventCreateKeyboardEvent(IntPtr.Zero, keyCode, false);
             CGEventPost(CGEventTapLocation.HID, down);
@@ -555,7 +287,8 @@ public static class UiTools
             CFRelease(down);
             CFRelease(up);
 
-            return $"OK: sent '{key}' to '{window_title}'";
+            return $"OK: sent '{key}' to focused window";
+
         }
         catch (Exception ex)
         {
@@ -563,122 +296,7 @@ public static class UiTools
         }
     }
 
-    [McpServerTool, Description(ToolDescriptions.FocusWindow)]
-    public static string focus_window(string window_title)
-    {
-        return ToolResult.Run("focus_window", () =>
-        {
-            var (ownerName, _) = FindWindowOwnerAndRect(window_title);
-            if (ownerName == null)
-                return $"ERROR: window '{window_title}' not found";
-
-            RunAppleScript($"tell application \"{EscapeAppleScript(ownerName)}\" to activate");
-            return ToolResult.Ok($"focused '{window_title}'");
-        });
-    }
-
-    [McpServerTool, Description(ToolDescriptions.GetWindowRect)]
-    public static string get_window_rect(string window_title)
-    {
-        try
-        {
-            var (ownerName, rect) = FindWindowOwnerAndRect(window_title);
-            if (ownerName == null)
-                return $"ERROR: window '{window_title}' not found";
-
-            if (!rect.HasValue)
-                return $"ERROR: could not get window rect for '{window_title}'";
-
-            var (x, y, w, h) = rect.Value;
-            return $"x={x} y={y} width={w} height={h}";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: get_window_rect failed: {ex.Message}";
-        }
-    }
-
-    [McpServerTool, Description(ToolDescriptions.CloseWindow)]
-    public static string close_window(string window_title)
-    {
-        try
-        {
-            var (pid, _) = FindWindowPidAndId(window_title);
-            if (pid == 0)
-                return $"ERROR: window '{window_title}' not found";
-
-            var appRef = AXUIElementCreateApplication(pid);
-            if (appRef == IntPtr.Zero)
-                return $"ERROR: could not create accessibility element for '{window_title}'";
-
-            try
-            {
-                var windowEl = FindAXWindow(appRef, window_title);
-                if (windowEl != IntPtr.Zero)
-                {
-                    // Try AXCloseButton
-                    var closeButtonAttr = CFStringCreateWithCString(IntPtr.Zero, "AXCloseButton", kCFStringEncodingUTF8);
-                    try
-                    {
-                        if (AXUIElementCopyAttributeValue(windowEl, closeButtonAttr, out var closeButton) == kAXErrorSuccess
-                            && closeButton != IntPtr.Zero)
-                        {
-                            var pressAction = CFStringCreateWithCString(IntPtr.Zero, "AXPress", kCFStringEncodingUTF8);
-                            try
-                            {
-                                if (AXUIElementPerformAction(closeButton, pressAction) == kAXErrorSuccess)
-                                    return $"OK: closed '{window_title}'";
-                            }
-                            finally
-                            {
-                                CFRelease(pressAction);
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        CFRelease(closeButtonAttr);
-                    }
-                }
-            }
-            finally
-            {
-                CFRelease(appRef);
-            }
-
-            // Fallback: AppleScript
-            var (ownerName, _) = FindWindowOwnerAndRect(window_title);
-            if (ownerName != null)
-            {
-                RunAppleScript($"tell application \"{EscapeAppleScript(ownerName)}\" to close front window");
-                return $"OK: closed '{window_title}' via AppleScript";
-            }
-
-            return $"ERROR: could not close '{window_title}'";
-        }
-        catch (Exception ex)
-        {
-            return $"ERROR: close_window failed: {ex.Message}";
-        }
-    }
-
     // ── Helpers ────────────────────────────────────────────────────────────
-
-    private static void ResizeImageIfNeeded(string path, int targetWidth, int targetHeight)
-    {
-        // Use sips (built-in macOS tool) to resize the screenshot to
-        // logical (point) resolution, matching CGEvent mouse coordinates.
-        var psi = new ProcessStartInfo("sips",
-            $"--resampleWidth {targetWidth} --resampleHeight {targetHeight} \"{path}\"")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        using var proc = Process.Start(psi)!;
-        proc.WaitForExit(5000);
-    }
 
     private static void ClickAtPoint(double x, double y)
     {
@@ -691,430 +309,5 @@ public static class UiTools
         CFRelease(down);
         CFRelease(up);
     }
-
-    private static string GetCFString(IntPtr cfString)
-    {
-        if (cfString == IntPtr.Zero) return "";
-        var length = CFStringGetLength(cfString);
-        if (length == 0) return "";
-        var buffer = new byte[(length + 1) * 4];
-        return CFStringGetCString(cfString, buffer, buffer.Length, kCFStringEncodingUTF8)
-            ? System.Text.Encoding.UTF8.GetString(buffer, 0, Array.IndexOf(buffer, (byte)0))
-            : "";
-    }
-
-    private static IntPtr CreateCFString(string s) =>
-        CFStringCreateWithCString(IntPtr.Zero, s, kCFStringEncodingUTF8);
-
-    /// <summary>Returns list of (ownerName, windowName, windowId, pid)</summary>
-    private static List<(string ownerName, string windowName, uint windowId, int pid)> GetWindowList()
-    {
-        var result = new List<(string, string, uint, int)>();
-        var windowList = CGWindowListCopyWindowInfo(
-            CGWindowListOption.OptionOnScreenOnly | CGWindowListOption.ExcludeDesktopElements, 0);
-        if (windowList == IntPtr.Zero) return result;
-
-        try
-        {
-            var kOwnerName = CreateCFString("kCGWindowOwnerName");
-            var kName = CreateCFString("kCGWindowName");
-            var kNumber = CreateCFString("kCGWindowNumber");
-            var kOwnerPID = CreateCFString("kCGWindowOwnerPID");
-            var kLayer = CreateCFString("kCGWindowLayer");
-
-            try
-            {
-                var count = CFArrayGetCount(windowList);
-                for (long i = 0; i < count; i++)
-                {
-                    var dict = CFArrayGetValueAtIndex(windowList, i);
-                    if (dict == IntPtr.Zero) continue;
-
-                    // Skip non-layer-0 windows (menus, etc.)
-                    var layerPtr = CFDictionaryGetValue(dict, kLayer);
-                    if (layerPtr != IntPtr.Zero)
-                    {
-                        CFNumberGetValue(layerPtr, kCFNumberSInt32Type, out int layer);
-                        if (layer != 0) continue;
-                    }
-
-                    var ownerName = GetCFString(CFDictionaryGetValue(dict, kOwnerName));
-                    var windowName = GetCFString(CFDictionaryGetValue(dict, kName));
-
-                    if (string.IsNullOrEmpty(ownerName)) continue;
-
-                    var numberPtr = CFDictionaryGetValue(dict, kNumber);
-                    uint windowId = 0;
-                    if (numberPtr != IntPtr.Zero)
-                    {
-                        CFNumberGetValue(numberPtr, kCFNumberSInt32Type, out int id);
-                        windowId = (uint)id;
-                    }
-
-                    int pid = 0;
-                    var pidPtr = CFDictionaryGetValue(dict, kOwnerPID);
-                    if (pidPtr != IntPtr.Zero)
-                        CFNumberGetValue(pidPtr, kCFNumberSInt32Type, out pid);
-
-                    result.Add((ownerName, windowName, windowId, pid));
-                }
-            }
-            finally
-            {
-                CFRelease(kOwnerName);
-                CFRelease(kName);
-                CFRelease(kNumber);
-                CFRelease(kOwnerPID);
-                CFRelease(kLayer);
-            }
-        }
-        finally
-        {
-            CFRelease(windowList);
-        }
-
-        return result;
-    }
-
-    private static uint FindWindowId(string titleFragment)
-    {
-        foreach (var (ownerName, windowName, windowId, _) in GetWindowList())
-        {
-            if (ownerName.Contains(titleFragment, StringComparison.OrdinalIgnoreCase) ||
-                windowName.Contains(titleFragment, StringComparison.OrdinalIgnoreCase))
-                return windowId;
-        }
-        return 0;
-    }
-
-    private static (int pid, uint windowId) FindWindowPidAndId(string titleFragment)
-    {
-        foreach (var (ownerName, windowName, windowId, pid) in GetWindowList())
-        {
-            if (ownerName.Contains(titleFragment, StringComparison.OrdinalIgnoreCase) ||
-                windowName.Contains(titleFragment, StringComparison.OrdinalIgnoreCase))
-                return (pid, windowId);
-        }
-        return (0, 0);
-    }
-
-    private static (string? ownerName, (double x, double y, double w, double h)?) FindWindowOwnerAndRect(string titleFragment)
-    {
-        var windowList = CGWindowListCopyWindowInfo(
-            CGWindowListOption.OptionOnScreenOnly | CGWindowListOption.ExcludeDesktopElements, 0);
-        if (windowList == IntPtr.Zero) return (null, null);
-
-        try
-        {
-            var kOwnerName = CreateCFString("kCGWindowOwnerName");
-            var kName = CreateCFString("kCGWindowName");
-            var kBounds = CreateCFString("kCGWindowBounds");
-            var kLayer = CreateCFString("kCGWindowLayer");
-
-            try
-            {
-                var count = CFArrayGetCount(windowList);
-                for (long i = 0; i < count; i++)
-                {
-                    var dict = CFArrayGetValueAtIndex(windowList, i);
-                    if (dict == IntPtr.Zero) continue;
-
-                    var layerPtr = CFDictionaryGetValue(dict, kLayer);
-                    if (layerPtr != IntPtr.Zero)
-                    {
-                        CFNumberGetValue(layerPtr, kCFNumberSInt32Type, out int layer);
-                        if (layer != 0) continue;
-                    }
-
-                    var ownerName = GetCFString(CFDictionaryGetValue(dict, kOwnerName));
-                    var windowName = GetCFString(CFDictionaryGetValue(dict, kName));
-
-                    if (!ownerName.Contains(titleFragment, StringComparison.OrdinalIgnoreCase) &&
-                        !windowName.Contains(titleFragment, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    // Parse bounds dict
-                    var boundsDict = CFDictionaryGetValue(dict, kBounds);
-                    if (boundsDict != IntPtr.Zero)
-                    {
-                        var kX = CreateCFString("X");
-                        var kY = CreateCFString("Y");
-                        var kW = CreateCFString("Width");
-                        var kH = CreateCFString("Height");
-                        try
-                        {
-                            double x = 0, y = 0, w = 0, h = 0;
-                            var xPtr = CFDictionaryGetValue(boundsDict, kX);
-                            var yPtr = CFDictionaryGetValue(boundsDict, kY);
-                            var wPtr = CFDictionaryGetValue(boundsDict, kW);
-                            var hPtr = CFDictionaryGetValue(boundsDict, kH);
-                            if (xPtr != IntPtr.Zero) CFNumberGetValue(xPtr, kCFNumberFloat64Type, out x);
-                            if (yPtr != IntPtr.Zero) CFNumberGetValue(yPtr, kCFNumberFloat64Type, out y);
-                            if (wPtr != IntPtr.Zero) CFNumberGetValue(wPtr, kCFNumberFloat64Type, out w);
-                            if (hPtr != IntPtr.Zero) CFNumberGetValue(hPtr, kCFNumberFloat64Type, out h);
-                            return (ownerName, (x, y, w, h));
-                        }
-                        finally
-                        {
-                            CFRelease(kX);
-                            CFRelease(kY);
-                            CFRelease(kW);
-                            CFRelease(kH);
-                        }
-                    }
-
-                    return (ownerName, null);
-                }
-            }
-            finally
-            {
-                CFRelease(kOwnerName);
-                CFRelease(kName);
-                CFRelease(kBounds);
-                CFRelease(kLayer);
-            }
-        }
-        finally
-        {
-            CFRelease(windowList);
-        }
-
-        return (null, null);
-    }
-
-    private static IntPtr FindAXWindow(IntPtr appRef, string titleFragment)
-    {
-        var windowsAttr = CreateCFString("AXWindows");
-        try
-        {
-            if (AXUIElementCopyAttributeValue(appRef, windowsAttr, out var windowsRef) != kAXErrorSuccess
-                || windowsRef == IntPtr.Zero)
-                return IntPtr.Zero;
-
-            var titleAttr = CreateCFString("AXTitle");
-            try
-            {
-                var count = CFArrayGetCount(windowsRef);
-                for (long i = 0; i < count; i++)
-                {
-                    var win = CFArrayGetValueAtIndex(windowsRef, i);
-                    if (win == IntPtr.Zero) continue;
-
-                    if (AXUIElementCopyAttributeValue(win, titleAttr, out var titleRef) == kAXErrorSuccess
-                        && titleRef != IntPtr.Zero)
-                    {
-                        var title = GetCFString(titleRef);
-                        if (title.Contains(titleFragment, StringComparison.OrdinalIgnoreCase))
-                            return win;
-                    }
-                }
-            }
-            finally
-            {
-                CFRelease(titleAttr);
-            }
-
-            // Return first window as fallback
-            if (CFArrayGetCount(windowsRef) > 0)
-                return CFArrayGetValueAtIndex(windowsRef, 0);
-        }
-        finally
-        {
-            CFRelease(windowsAttr);
-        }
-
-        return IntPtr.Zero;
-    }
-
-    private static IntPtr FindAXElementByName(IntPtr element, string name, int depth)
-    {
-        if (depth > 10) return IntPtr.Zero;
-
-        // Check this element's title/description
-        var titleAttr = CreateCFString("AXTitle");
-        var descAttr = CreateCFString("AXDescription");
-        try
-        {
-            if (AXUIElementCopyAttributeValue(element, titleAttr, out var titleRef) == kAXErrorSuccess
-                && titleRef != IntPtr.Zero)
-            {
-                var title = GetCFString(titleRef);
-                if (title.Contains(name, StringComparison.OrdinalIgnoreCase))
-                    return element;
-            }
-
-            if (AXUIElementCopyAttributeValue(element, descAttr, out var descRef) == kAXErrorSuccess
-                && descRef != IntPtr.Zero)
-            {
-                var desc = GetCFString(descRef);
-                if (desc.Contains(name, StringComparison.OrdinalIgnoreCase))
-                    return element;
-            }
-        }
-        finally
-        {
-            CFRelease(titleAttr);
-            CFRelease(descAttr);
-        }
-
-        // Search children
-        var childrenAttr = CreateCFString("AXChildren");
-        try
-        {
-            if (AXUIElementCopyAttributeValue(element, childrenAttr, out var childrenRef) == kAXErrorSuccess
-                && childrenRef != IntPtr.Zero)
-            {
-                var count = CFArrayGetCount(childrenRef);
-                for (long i = 0; i < count; i++)
-                {
-                    var child = CFArrayGetValueAtIndex(childrenRef, i);
-                    if (child == IntPtr.Zero) continue;
-                    var found = FindAXElementByName(child, name, depth + 1);
-                    if (found != IntPtr.Zero) return found;
-                }
-            }
-        }
-        finally
-        {
-            CFRelease(childrenAttr);
-        }
-
-        return IntPtr.Zero;
-    }
-
-    private static (double x, double y) GetAXElementCenter(IntPtr element)
-    {
-        var posAttr = CreateCFString("AXPosition");
-        var sizeAttr = CreateCFString("AXSize");
-        try
-        {
-            if (AXUIElementCopyAttributeValue(element, posAttr, out var posRef) == kAXErrorSuccess
-                && posRef != IntPtr.Zero
-                && AXUIElementCopyAttributeValue(element, sizeAttr, out var sizeRef) == kAXErrorSuccess
-                && sizeRef != IntPtr.Zero)
-            {
-                // AXPosition and AXSize are AXValue types - extract via CoreFoundation
-                // They contain CGPoint and CGSize as AXValueRef
-                // Use AXValueGetValue P/Invoke
-                if (AXValueGetValue(posRef, 1, out var pos) && AXValueGetSize(sizeRef, 2, out var size))
-                {
-                    return (pos.X + size.X / 2.0, pos.Y + size.Y / 2.0);
-                }
-            }
-        }
-        finally
-        {
-            CFRelease(posAttr);
-            CFRelease(sizeAttr);
-        }
-        return (-1, -1);
-    }
-
-    [DllImport(ApplicationServices)]
-    private static extern bool AXValueGetValue(IntPtr value, int type, out CGPoint point);
-
-    [DllImport(ApplicationServices, EntryPoint = "AXValueGetValue")]
-    private static extern bool AXValueGetSize(IntPtr value, int type, out CGSize size);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct CGSize
-    {
-        public double X; // width
-        public double Y; // height
-    }
-
-    private static void WalkAXTree(IntPtr element, StringBuilder sb, int depth)
-    {
-        if (depth > 10) return;
-
-        var indent = new string(' ', depth * 2);
-        var roleAttr = CreateCFString("AXRole");
-        var titleAttr = CreateCFString("AXTitle");
-        var descAttr = CreateCFString("AXDescription");
-        var valueAttr = CreateCFString("AXValue");
-        var enabledAttr = CreateCFString("AXEnabled");
-
-        try
-        {
-            var role = "";
-            var title = "";
-            var desc = "";
-            var value = "";
-            var enabled = true;
-
-            if (AXUIElementCopyAttributeValue(element, roleAttr, out var roleRef) == kAXErrorSuccess && roleRef != IntPtr.Zero)
-                role = GetCFString(roleRef);
-            if (AXUIElementCopyAttributeValue(element, titleAttr, out var titleRef) == kAXErrorSuccess && titleRef != IntPtr.Zero)
-                title = GetCFString(titleRef);
-            if (AXUIElementCopyAttributeValue(element, descAttr, out var descRef) == kAXErrorSuccess && descRef != IntPtr.Zero)
-                desc = GetCFString(descRef);
-            if (AXUIElementCopyAttributeValue(element, valueAttr, out var valueRef) == kAXErrorSuccess && valueRef != IntPtr.Zero)
-            {
-                // Value could be any type; try to get as string
-                if (CFGetTypeID(valueRef) == CFStringGetTypeID())
-                    value = GetCFString(valueRef);
-            }
-            if (AXUIElementCopyAttributeValue(element, enabledAttr, out var enabledRef) == kAXErrorSuccess && enabledRef != IntPtr.Zero)
-                enabled = CFBooleanGetValue(enabledRef) != 0;
-
-            var parts = new List<string>();
-            if (!string.IsNullOrEmpty(title)) parts.Add($"title=\"{title}\"");
-            if (!string.IsNullOrEmpty(desc)) parts.Add($"desc=\"{desc}\"");
-            if (!string.IsNullOrEmpty(value)) parts.Add($"value=\"{value}\"");
-            parts.Add($"enabled={enabled}");
-
-            sb.AppendLine($"{indent}[{role}] {string.Join(" ", parts)}");
-        }
-        finally
-        {
-            CFRelease(roleAttr);
-            CFRelease(titleAttr);
-            CFRelease(descAttr);
-            CFRelease(valueAttr);
-            CFRelease(enabledAttr);
-        }
-
-        // Walk children
-        var childrenAttr = CreateCFString("AXChildren");
-        try
-        {
-            if (AXUIElementCopyAttributeValue(element, childrenAttr, out var childrenRef) == kAXErrorSuccess
-                && childrenRef != IntPtr.Zero)
-            {
-                var count = CFArrayGetCount(childrenRef);
-                for (long i = 0; i < count; i++)
-                {
-                    var child = CFArrayGetValueAtIndex(childrenRef, i);
-                    if (child != IntPtr.Zero)
-                        WalkAXTree(child, sb, depth + 1);
-                }
-            }
-        }
-        finally
-        {
-            CFRelease(childrenAttr);
-        }
-    }
-
-    [DllImport(CoreFoundation)]
-    private static extern int CFStringGetTypeID();
-
-    private static string RunAppleScript(string script)
-    {
-        var psi = new ProcessStartInfo("osascript", $"-e '{script}'")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        using var proc = Process.Start(psi)!;
-        var output = proc.StandardOutput.ReadToEnd();
-        proc.WaitForExit(5000);
-        return output.Trim();
-    }
-
-    private static string EscapeAppleScript(string s) =>
-        s.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
 }
