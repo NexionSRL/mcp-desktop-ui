@@ -18,6 +18,14 @@ public static class Program
     /// </summary>
     public static async Task RunAsync(string[] args, IPlatformChecker? checker = null)
     {
+        // --version flag: print version and exit
+        if (args.Contains("--version"))
+        {
+            var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "unknown";
+            Console.WriteLine($"mcp-desktop-ui {version}");
+            return;
+        }
+
         // Run platform checks and log warnings to stderr (stdout is MCP transport)
         if (checker != null)
         {
