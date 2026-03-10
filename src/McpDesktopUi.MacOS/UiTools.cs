@@ -18,19 +18,6 @@ public static class UiTools
     private const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
     private const string ApplicationServices = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices";
 
-    // Display info
-    [DllImport(CoreGraphics)]
-    private static extern uint CGMainDisplayID();
-
-    [DllImport(CoreGraphics)]
-    private static extern CGRect CGDisplayBounds(uint display);
-
-    [DllImport(CoreGraphics)]
-    private static extern nuint CGDisplayPixelsWide(uint display);
-
-    [DllImport(CoreGraphics)]
-    private static extern nuint CGDisplayPixelsHigh(uint display);
-
     // CGEvent
     [DllImport(CoreGraphics)]
     private static extern IntPtr CGEventCreateMouseEvent(IntPtr source, CGEventType mouseType, CGPoint mouseCursorPosition, CGMouseButton mouseButton);
@@ -156,13 +143,6 @@ public static class UiTools
         public CGPoint(double x, double y) { X = x; Y = y; }
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct CGRect
-    {
-        public CGPoint Origin;
-        public CGSize Size;
-    }
-
     // ── Tools ──────────────────────────────────────────────────────────────
 
     [McpServerTool, Description(ToolDescriptions.Screenshot)]
@@ -198,32 +178,19 @@ public static class UiTools
             if (proc.ExitCode != 0 || !File.Exists(tempPath))
                 return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = $"ERROR: screencapture failed (exit code {proc.ExitCode})" }] };
 
-            // Resize screenshot to native pixel resolution so that
-            // screenshot coordinates map 1:1 to physical display pixels.
-            // Mouse tools convert from pixel coords to CGEvent point coords.
-            var displayId = CGMainDisplayID();
-            var pixelWidth = (int)CGDisplayPixelsWide(displayId);
-            var pixelHeight = (int)CGDisplayPixelsHigh(displayId);
-            if (window_title == null)
+            // Normalize screenshot to logical (point) coordinates so that
+            // coordinates from the image map directly to CGEvent mouse functions.
+            // Full-screen captures are already at logical resolution (1x).
+            // Window captures (-l flag) use backing store resolution (2x on Retina),
+            // so we resize them down to match the window's point dimensions.
+            if (window_title != null)
             {
-                if (pixelWidth > 0 && pixelHeight > 0)
-                    ResizeImageIfNeeded(tempPath, pixelWidth, pixelHeight);
-            }
-            else
-            {
-                // For window captures, scale proportionally using the display scale factor
-                var bounds = CGDisplayBounds(displayId);
-                if (bounds.Size.X > 0 && bounds.Size.Y > 0)
+                var (_, rect) = FindWindowOwnerAndRect(window_title);
+                if (rect.HasValue)
                 {
-                    var scaleX = (double)pixelWidth / bounds.Size.X;
-                    var scaleY = (double)pixelHeight / bounds.Size.Y;
-                    var (_, rect) = FindWindowOwnerAndRect(window_title);
-                    if (rect.HasValue)
-                    {
-                        var (_, _, w, h) = rect.Value;
-                        if (w > 0 && h > 0)
-                            ResizeImageIfNeeded(tempPath, (int)(w * scaleX), (int)(h * scaleY));
-                    }
+                    var (_, _, w, h) = rect.Value;
+                    if (w > 0 && h > 0)
+                        ResizeImageIfNeeded(tempPath, (int)w, (int)h);
                 }
             }
 
@@ -367,7 +334,7 @@ public static class UiTools
     {
         return ToolResult.Run("right_click_at", () =>
         {
-            var point = PixelToPoint(x, y);
+            var point = new CGPoint(x, y);
             var down = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.RightMouseDown, point, CGMouseButton.Right);
             var up = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.RightMouseUp, point, CGMouseButton.Right);
             CGEventPost(CGEventTapLocation.HID, down);
@@ -384,7 +351,7 @@ public static class UiTools
     {
         return ToolResult.Run("double_click_at", () =>
         {
-            var point = PixelToPoint(x, y);
+            var point = new CGPoint(x, y);
             var down1 = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.LeftMouseDown, point, CGMouseButton.Left);
             var up1 = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.LeftMouseUp, point, CGMouseButton.Left);
             CGEventPost(CGEventTapLocation.HID, down1);
@@ -414,7 +381,7 @@ public static class UiTools
     {
         return ToolResult.Run("drag", () =>
         {
-            var startPoint = PixelToPoint(from_x, from_y);
+            var startPoint = new CGPoint(from_x, from_y);
 
             // Mouse down at start
             var down = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.LeftMouseDown, startPoint, CGMouseButton.Left);
@@ -427,7 +394,7 @@ public static class UiTools
             for (int i = 1; i <= steps; i++)
             {
                 double t = (double)i / steps;
-                var point = PixelToPoint(
+                var point = new CGPoint(
                     from_x + (to_x - from_x) * t,
                     from_y + (to_y - from_y) * t);
                 var drag_evt = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.LeftMouseDragged, point, CGMouseButton.Left);
@@ -437,7 +404,7 @@ public static class UiTools
             }
 
             // Mouse up at end
-            var endPoint = PixelToPoint(to_x, to_y);
+            var endPoint = new CGPoint(to_x, to_y);
             var up = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.LeftMouseUp, endPoint, CGMouseButton.Left);
             CGEventPost(CGEventTapLocation.HID, up);
             CFRelease(up);
@@ -485,7 +452,7 @@ public static class UiTools
         return ToolResult.Run("scroll_at", () =>
         {
             // Move mouse to position
-            var point = PixelToPoint(x, y);
+            var point = new CGPoint(x, y);
             var moveEvt = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.MouseMoved, point, CGMouseButton.Left);
             CGEventPost(CGEventTapLocation.HID, moveEvt);
             CFRelease(moveEvt);
@@ -505,7 +472,7 @@ public static class UiTools
     {
         return ToolResult.Run("move_mouse", () =>
         {
-            var point = PixelToPoint(x, y);
+            var point = new CGPoint(x, y);
             var evt = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.MouseMoved, point, CGMouseButton.Left);
             CGEventPost(CGEventTapLocation.HID, evt);
             CFRelease(evt);
@@ -697,28 +664,10 @@ public static class UiTools
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Converts pixel coordinates (as seen in screenshots) to CGEvent point coordinates.
-    /// On non-scaled displays this is a no-op. On HiDPI/scaled displays it divides by the scale factor.
-    /// </summary>
-    private static CGPoint PixelToPoint(double x, double y)
-    {
-        var displayId = CGMainDisplayID();
-        var bounds = CGDisplayBounds(displayId);
-        var pixelsWide = (double)CGDisplayPixelsWide(displayId);
-        var pixelsHigh = (double)CGDisplayPixelsHigh(displayId);
-        if (pixelsWide > 0 && pixelsHigh > 0 && bounds.Size.X > 0 && bounds.Size.Y > 0)
-        {
-            x = x * bounds.Size.X / pixelsWide;
-            y = y * bounds.Size.Y / pixelsHigh;
-        }
-        return new CGPoint(x, y);
-    }
-
     private static void ResizeImageIfNeeded(string path, int targetWidth, int targetHeight)
     {
-        // Use sips (built-in macOS tool) to resize the screenshot to match
-        // the point coordinate space used by CGEvent mouse functions.
+        // Use sips (built-in macOS tool) to resize the screenshot to
+        // logical (point) resolution, matching CGEvent mouse coordinates.
         var psi = new ProcessStartInfo("sips",
             $"--resampleWidth {targetWidth} --resampleHeight {targetHeight} \"{path}\"")
         {
@@ -733,7 +682,7 @@ public static class UiTools
 
     private static void ClickAtPoint(double x, double y)
     {
-        var point = PixelToPoint(x, y);
+        var point = new CGPoint(x, y);
         var down = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.LeftMouseDown, point, CGMouseButton.Left);
         var up = CGEventCreateMouseEvent(IntPtr.Zero, CGEventType.LeftMouseUp, point, CGMouseButton.Left);
         CGEventPost(CGEventTapLocation.HID, down);
