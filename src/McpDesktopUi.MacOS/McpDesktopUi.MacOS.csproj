@@ -10,7 +10,6 @@
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
-    <Version>1.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
